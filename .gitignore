@@ -1,0 +1,8 @@
+__pycache__/
+.pytest_cache/
+.venv/
+.DS_Store
+pipery.jsonl
+dist/
+test-project/dist/
+test-project/target/
