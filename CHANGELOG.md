@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-04-27
+## [1.0.0] - 2026-04-27
 
 ### Added
 - GitHub Marketplace branding icon updated to match action technology (Feather icon set)
