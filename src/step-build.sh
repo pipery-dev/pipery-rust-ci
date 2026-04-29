@@ -15,6 +15,7 @@ if [ -n "${INPUT_FEATURES:-}" ]; then
   BUILD_ARGS="$BUILD_ARGS --features ${INPUT_FEATURES}"
 fi
 
+# shellcheck disable=SC2086
 cargo build $BUILD_ARGS
 
 mkdir -p dist
