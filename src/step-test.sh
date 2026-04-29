@@ -12,4 +12,5 @@ if [ -n "${INPUT_FEATURES:-}" ]; then
   TEST_ARGS="$TEST_ARGS --features ${INPUT_FEATURES}"
 fi
 
+# shellcheck disable=SC2086
 cargo test $TESTS_PATH $TEST_ARGS
