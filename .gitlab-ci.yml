@@ -1,0 +1,211 @@
+# GitLab CI Pipeline for pipery-rust-ci
+# Rust compilation, testing, and publishing
+
+variables:
+  PROJECT_PATH: "."
+  CONFIG_FILE: ".github/pipery/config.yaml"
+  RUST_TOOLCHAIN: "stable"
+  TESTS_PATH: ""
+  FEATURES: ""
+  TARGET: ""
+  VERSION_BUMP: "patch"
+  SKIP_SAST: "false"
+  SKIP_SCA: "false"
+  SKIP_LINT: "false"
+  SKIP_BUILD: "false"
+  SKIP_TEST: "false"
+  SKIP_VERSIONING: "false"
+  SKIP_PACKAGING: "false"
+  SKIP_RELEASE: "false"
+  SKIP_REINTEGRATION: "false"
+  LOG_FILE: "pipery.jsonl"
+  TARGET_BRANCH: "main"
+  CRATES_TOKEN: ""
+  GITHUB_TOKEN: ""
+
+stages:
+  - checkout
+  - setup
+  - sast
+  - sca
+  - lint
+  - build
+  - test
+  - versioning
+  - packaging
+  - release
+  - reintegration
+  - logs
+
+checkout:
+  stage: checkout
+  image: alpine:latest
+  script:
+    - echo "Repository checked out"
+
+setup:
+  stage: setup
+  image: rust:${RUST_TOOLCHAIN}
+  script:
+    - rustc --version
+    - cargo --version
+    - cd $PROJECT_PATH
+    - cargo fetch
+    - echo "Setup complete"
+
+sast_scan:
+  stage: sast
+  image: rust:${RUST_TOOLCHAIN}
+  before_script:
+    - apk add --no-cache python3 py3-pip
+    - pip install pipery-tooling
+  script:
+    - echo "Running Rust SAST scan..."
+    - pipery-tooling sast --project-path $PROJECT_PATH --config $CONFIG_FILE --log-file $LOG_FILE
+  allow_failure: true
+  rules:
+    - if: '$SKIP_SAST == "true"'
+      when: never
+    - when: on_success
+  artifacts:
+    paths:
+      - $LOG_FILE
+    expire_in: 30 days
+
+sca_scan:
+  stage: sca
+  image: rust:${RUST_TOOLCHAIN}
+  before_script:
+    - pip install pipery-tooling
+  script:
+    - echo "Running Rust SCA scan..."
+    - pipery-tooling sca --project-path $PROJECT_PATH --config $CONFIG_FILE --log-file $LOG_FILE
+  allow_failure: true
+  rules:
+    - if: '$SKIP_SCA == "true"'
+      when: never
+    - when: on_success
+  artifacts:
+    paths:
+      - $LOG_FILE
+    expire_in: 30 days
+
+lint:
+  stage: lint
+  image: rust:${RUST_TOOLCHAIN}
+  script:
+    - cd $PROJECT_PATH
+    - rustfmt --check $(find . -name "*.rs")
+    - cargo clippy --all-targets -- -D warnings
+  rules:
+    - if: '$SKIP_LINT == "true"'
+      when: never
+    - when: on_success
+  allow_failure: true
+
+build:
+  stage: build
+  image: rust:${RUST_TOOLCHAIN}
+  script:
+    - cd $PROJECT_PATH
+    - |
+      BUILD_FLAGS=""
+      [ -n "$FEATURES" ] && BUILD_FLAGS="$BUILD_FLAGS --features $FEATURES"
+      [ -n "$TARGET" ] && BUILD_FLAGS="$BUILD_FLAGS --target $TARGET"
+    - cargo build --release $BUILD_FLAGS
+    - echo "Build complete"
+  rules:
+    - if: '$SKIP_BUILD == "true"'
+      when: never
+    - when: on_success
+  artifacts:
+    paths:
+      - $PROJECT_PATH/target/release/
+    expire_in: 1 day
+
+test:
+  stage: test
+  image: rust:${RUST_TOOLCHAIN}
+  script:
+    - cd $PROJECT_PATH
+    - cargo test --verbose --all-targets --all-features
+  rules:
+    - if: '$SKIP_TEST == "true"'
+      when: never
+    - when: on_success
+  artifacts:
+    expire_in: 30 days
+
+versioning:
+  stage: versioning
+  image: rust:${RUST_TOOLCHAIN}
+  before_script:
+    - pip install pipery-tooling
+  script:
+    - pipery-tooling version --project-path $PROJECT_PATH --version-bump $VERSION_BUMP --log-file $LOG_FILE
+    - grep "^version" $PROJECT_PATH/Cargo.toml | head -1 > version_info.txt
+  artifacts:
+    paths:
+      - version_info.txt
+      - $LOG_FILE
+    expire_in: 30 days
+  rules:
+    - if: '$SKIP_VERSIONING == "true"'
+      when: never
+    - when: on_success
+
+packaging:
+  stage: packaging
+  image: rust:${RUST_TOOLCHAIN}
+  script:
+    - cd $PROJECT_PATH
+    - cargo package
+  rules:
+    - if: '$SKIP_PACKAGING == "true"'
+      when: never
+    - when: on_success
+
+release:
+  stage: release
+  image: rust:${RUST_TOOLCHAIN}
+  script:
+    - |
+      if [ -z "$CRATES_TOKEN" ]; then
+        echo "CRATES_TOKEN not set, skipping release"
+        exit 0
+      fi
+    - cd $PROJECT_PATH
+    - cargo publish --token $CRATES_TOKEN
+  rules:
+    - if: '$SKIP_RELEASE == "true"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $TARGET_BRANCH'
+      when: on_success
+    - when: manual
+
+reintegration:
+  stage: reintegration
+  image: alpine:latest
+  script:
+    - |
+      [ -z "$GITHUB_TOKEN" ] && exit 0
+      echo "Reintegration would update target branch"
+  rules:
+    - if: '$SKIP_REINTEGRATION == "true"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $TARGET_BRANCH'
+      when: on_success
+    - when: manual
+  allow_failure: true
+
+publish_logs:
+  stage: logs
+  image: alpine:latest
+  script:
+    - echo "Logs collected"
+  artifacts:
+    paths:
+      - $LOG_FILE
+      - version_info.txt
+    expire_in: 90 days
+  when: always
