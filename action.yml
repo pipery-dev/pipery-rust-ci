@@ -8,7 +8,7 @@ inputs:
   config_file:
     description: 'Path to Pipery config file.'
     required: false
-    default: '.github/pipery/config.yaml'
+    default: '.pipery/config.yaml'
   rust_toolchain:
     description: 'Rust toolchain to use (e.g. stable, nightly, 1.75).'
     required: false
