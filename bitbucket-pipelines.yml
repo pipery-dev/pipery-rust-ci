@@ -64,11 +64,10 @@ definitions:
         name: Code Quality Linting
         image: rust:latest
         script:
-          - echo "Running Rust linters..."
-          - cd ${PROJECT_PATH:-.}
-          - rustfmt --check $(find . -name "*.rs")
-          - cargo clippy --all-targets -- -D warnings
-          - echo "Lint stage complete"
+          - bash ./src/step-lint.sh
+        env:
+          INPUT_PROJECT_PATH: ${PROJECT_PATH:-.}
+          INPUT_LOG_FILE: ${LOG_FILE:-pipery.jsonl}
 
     - step: &build-step
         name: Build Rust Project
@@ -76,14 +75,10 @@ definitions:
         caches:
           - cargo
         script:
-          - echo "Building Rust project..."
-          - cd ${PROJECT_PATH:-.}
-          - |
-            BUILD_FLAGS=""
-            [ -n "$FEATURES" ] && BUILD_FLAGS="$BUILD_FLAGS --features $FEATURES"
-            [ -n "$TARGET" ] && BUILD_FLAGS="$BUILD_FLAGS --target $TARGET"
-          - cargo build --release $BUILD_FLAGS
-          - echo "Build complete"
+          - bash ./src/step-build.sh
+        env:
+          INPUT_PROJECT_PATH: ${PROJECT_PATH:-.}
+          INPUT_LOG_FILE: ${LOG_FILE:-pipery.jsonl}
         artifacts:
           - target/release/**
 
@@ -93,25 +88,20 @@ definitions:
         caches:
           - cargo
         script:
-          - echo "Running Rust tests..."
-          - cd ${PROJECT_PATH:-.}
-          - cargo test --verbose --all-targets --all-features
-          - echo "Tests complete"
+          - bash ./src/step-test.sh
+        env:
+          INPUT_PROJECT_PATH: ${PROJECT_PATH:-.}
+          INPUT_LOG_FILE: ${LOG_FILE:-pipery.jsonl}
 
     - step: &versioning-step
         name: Version Bump & Tag
         image: rust:latest
         script:
-          - echo "Running versioning step..."
-          - apk add --no-cache python3 py3-pip
-          - pip install --quiet pipery-tooling
-          - |
-            pipery-tooling version \
-              --project-path ${PROJECT_PATH:-.} \
-              --version-bump ${VERSION_BUMP:-patch} \
-              --log-file ${LOG_FILE:-pipery.jsonl}
-          - grep "^version" ${PROJECT_PATH:-.}/Cargo.toml | head -1 > version_info.txt
-          - cat version_info.txt
+          - bash ./src/step-version.sh
+        env:
+          INPUT_PROJECT_PATH: ${PROJECT_PATH:-.}
+          INPUT_VERSION_BUMP: ${VERSION_BUMP:-patch}
+          INPUT_LOG_FILE: ${LOG_FILE:-pipery.jsonl}
         artifacts:
           - version_info.txt
           - ${LOG_FILE:-pipery.jsonl}
@@ -122,38 +112,32 @@ definitions:
         caches:
           - cargo
         script:
-          - echo "Creating Rust package..."
-          - cd ${PROJECT_PATH:-.}
-          - cargo package
-          - echo "Package created"
+          - bash ./src/step-package.sh
+        env:
+          INPUT_PROJECT_PATH: ${PROJECT_PATH:-.}
+          INPUT_LOG_FILE: ${LOG_FILE:-pipery.jsonl}
 
     - step: &release-step
         name: Release to crates.io
         image: rust:latest
         trigger: manual
         script:
-          - |
-            if [ -z "$CRATES_TOKEN" ]; then
-              echo "CRATES_TOKEN not set, skipping release"
-              exit 0
-            fi
-          - echo "Publishing to crates.io..."
-          - cd ${PROJECT_PATH:-.}
-          - cargo publish --token $CRATES_TOKEN
-          - echo "Release complete"
+          - bash ./src/step-release.sh
+        env:
+          INPUT_PROJECT_PATH: ${PROJECT_PATH:-.}
+          INPUT_LOG_FILE: ${LOG_FILE:-pipery.jsonl}
 
     - step: &reintegration-step
         name: Reintegration to Target Branch
         image: alpine:latest
         trigger: manual
         script:
-          - echo "Reintegration step would update target branch..."
-          - |
-            if [ -z "$GITHUB_TOKEN" ]; then
-              echo "Skipping reintegration: GITHUB_TOKEN not set"
-              exit 0
-            fi
-          - echo "Reintegration complete"
+          - bash ./src/step-reintegrate.sh
+        env:
+          INPUT_PROJECT_PATH: ${PROJECT_PATH:-.}
+          INPUT_LOG_FILE: ${LOG_FILE:-pipery.jsonl}
+          INPUT_TARGET_BRANCH: ${TARGET_BRANCH:-main}
+          GITHUB_TOKEN: ${GITHUB_TOKEN:-}
 
     - step: &logs-step
         name: Collect & Archive Logs
