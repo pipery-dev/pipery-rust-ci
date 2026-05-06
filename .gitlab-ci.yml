@@ -56,12 +56,13 @@ setup:
 sast_scan:
   stage: sast
   image: rust:${RUST_TOOLCHAIN}
-  before_script:
-    - apk add --no-cache python3 py3-pip
-    - pip install pipery-tooling
   script:
-    - echo "Running Rust SAST scan..."
-    - pipery-tooling sast --project-path $PROJECT_PATH --config $CONFIG_FILE --log-file $LOG_FILE
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-sast.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_CONFIG_FILE: $CONFIG_FILE
+    INPUT_LOG_FILE: $LOG_FILE
   allow_failure: true
   rules:
     - if: '$SKIP_SAST == "true"'
@@ -75,11 +76,13 @@ sast_scan:
 sca_scan:
   stage: sca
   image: rust:${RUST_TOOLCHAIN}
-  before_script:
-    - pip install pipery-tooling
   script:
-    - echo "Running Rust SCA scan..."
-    - pipery-tooling sca --project-path $PROJECT_PATH --config $CONFIG_FILE --log-file $LOG_FILE
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-sca.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_CONFIG_FILE: $CONFIG_FILE
+    INPUT_LOG_FILE: $LOG_FILE
   allow_failure: true
   rules:
     - if: '$SKIP_SCA == "true"'
@@ -94,9 +97,11 @@ lint:
   stage: lint
   image: rust:${RUST_TOOLCHAIN}
   script:
-    - cd $PROJECT_PATH
-    - rustfmt --check $(find . -name "*.rs")
-    - cargo clippy --all-targets -- -D warnings
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-lint.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_LOG_FILE: $LOG_FILE
   rules:
     - if: '$SKIP_LINT == "true"'
       when: never
@@ -107,13 +112,11 @@ build:
   stage: build
   image: rust:${RUST_TOOLCHAIN}
   script:
-    - cd $PROJECT_PATH
-    - |
-      BUILD_FLAGS=""
-      [ -n "$FEATURES" ] && BUILD_FLAGS="$BUILD_FLAGS --features $FEATURES"
-      [ -n "$TARGET" ] && BUILD_FLAGS="$BUILD_FLAGS --target $TARGET"
-    - cargo build --release $BUILD_FLAGS
-    - echo "Build complete"
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-build.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_LOG_FILE: $LOG_FILE
   rules:
     - if: '$SKIP_BUILD == "true"'
       when: never
@@ -127,8 +130,12 @@ test:
   stage: test
   image: rust:${RUST_TOOLCHAIN}
   script:
-    - cd $PROJECT_PATH
-    - cargo test --verbose --all-targets --all-features
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-test.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_TESTS_PATH: $TESTS_PATH
+    INPUT_LOG_FILE: $LOG_FILE
   rules:
     - if: '$SKIP_TEST == "true"'
       when: never
@@ -139,11 +146,13 @@ test:
 versioning:
   stage: versioning
   image: rust:${RUST_TOOLCHAIN}
-  before_script:
-    - pip install pipery-tooling
   script:
-    - pipery-tooling version --project-path $PROJECT_PATH --version-bump $VERSION_BUMP --log-file $LOG_FILE
-    - grep "^version" $PROJECT_PATH/Cargo.toml | head -1 > version_info.txt
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-version.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_VERSION_BUMP: $VERSION_BUMP
+    INPUT_LOG_FILE: $LOG_FILE
   artifacts:
     paths:
       - version_info.txt
@@ -158,8 +167,11 @@ packaging:
   stage: packaging
   image: rust:${RUST_TOOLCHAIN}
   script:
-    - cd $PROJECT_PATH
-    - cargo package
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-package.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_LOG_FILE: $LOG_FILE
   rules:
     - if: '$SKIP_PACKAGING == "true"'
       when: never
@@ -169,13 +181,12 @@ release:
   stage: release
   image: rust:${RUST_TOOLCHAIN}
   script:
-    - |
-      if [ -z "$CRATES_TOKEN" ]; then
-        echo "CRATES_TOKEN not set, skipping release"
-        exit 0
-      fi
-    - cd $PROJECT_PATH
-    - cargo publish --token $CRATES_TOKEN
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-release.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_CRATES_TOKEN: $CRATES_TOKEN
+    INPUT_LOG_FILE: $LOG_FILE
   rules:
     - if: '$SKIP_RELEASE == "true"'
       when: never
@@ -187,9 +198,13 @@ reintegration:
   stage: reintegration
   image: alpine:latest
   script:
-    - |
-      [ -z "$GITHUB_TOKEN" ] && exit 0
-      echo "Reintegration would update target branch"
+    # Refactored: Call shared script instead of inline logic
+    - bash ./src/step-reintegrate.sh
+  env:
+    INPUT_PROJECT_PATH: $PROJECT_PATH
+    INPUT_LOG_FILE: $LOG_FILE
+    INPUT_TARGET_BRANCH: $TARGET_BRANCH
+    GITHUB_TOKEN: $GITHUB_TOKEN
   rules:
     - if: '$SKIP_REINTEGRATION == "true"'
       when: never
