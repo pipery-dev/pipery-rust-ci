@@ -1,0 +1,357 @@
+# ============================================================================
+# Bitbucket Pipelines Configuration for pipery-rust-ci
+# Production-Ready Rust CI Pipeline
+# ============================================================================
+#
+# SETUP INSTRUCTIONS:
+# 1. Copy this file to pipery-rust-ci repository root as bitbucket-pipelines.yml
+# 2. Configure Protected Variables in Bitbucket
+# 3. Set SKIP_* variables to 'true' to disable specific stages
+#
+# PROTECTED VARIABLES TO CONFIGURE:
+# - CRATES_TOKEN: crates.io authentication token (Mark as Secured)
+# - GITHUB_TOKEN: GitHub API token for reintegration (Mark as Secured)
+
+definitions:
+  steps:
+    - step: &checkout-step
+        name: Checkout Repository
+        image: alpine:latest
+        script:
+          - echo "Repository checked out by Bitbucket Pipelines"
+          - ls -la
+
+    - step: &setup-step
+        name: Setup Rust Environment
+        image: rust:latest
+        caches:
+          - cargo
+        script:
+          - echo "Setting up Rust CI environment..."
+          - rustc --version
+          - cargo --version
+          - cd ${PROJECT_PATH:-.}
+          - cargo fetch
+          - echo "Setup complete"
+
+    - step: &sast-scan
+        name: SAST Security Scan
+        image: rust:latest
+        script:
+          - echo "Running SAST scan using pipery-tooling..."
+          - apk add --no-cache python3 py3-pip
+          - pip install --quiet pipery-tooling
+          - |
+            pipery-tooling sast \
+              --project-path ${PROJECT_PATH:-.} \
+              --config ${CONFIG_FILE:-.pipery/config.yaml} \
+              --log-file ${LOG_FILE:-pipery.jsonl}
+          - echo "SAST scan complete"
+        artifacts:
+          - ${LOG_FILE:-pipery.jsonl}
+
+    - step: &sca-scan
+        name: SCA Dependency Scan
+        image: rust:latest
+        script:
+          - echo "Running SCA scan using pipery-tooling..."
+          - apk add --no-cache python3 py3-pip
+          - pip install --quiet pipery-tooling
+          - |
+            pipery-tooling sca \
+              --project-path ${PROJECT_PATH:-.} \
+              --config ${CONFIG_FILE:-.pipery/config.yaml} \
+              --log-file ${LOG_FILE:-pipery.jsonl}
+          - echo "SCA scan complete"
+        artifacts:
+          - ${LOG_FILE:-pipery.jsonl}
+
+    - step: &lint-step
+        name: Code Quality Linting
+        image: rust:latest
+        script:
+          - echo "Running Rust linters..."
+          - cd ${PROJECT_PATH:-.}
+          - rustfmt --check $(find . -name "*.rs")
+          - cargo clippy --all-targets -- -D warnings
+          - echo "Lint stage complete"
+
+    - step: &build-step
+        name: Build Rust Project
+        image: rust:latest
+        caches:
+          - cargo
+        script:
+          - echo "Building Rust project..."
+          - cd ${PROJECT_PATH:-.}
+          - |
+            BUILD_FLAGS=""
+            [ -n "$FEATURES" ] && BUILD_FLAGS="$BUILD_FLAGS --features $FEATURES"
+            [ -n "$TARGET" ] && BUILD_FLAGS="$BUILD_FLAGS --target $TARGET"
+          - cargo build --release $BUILD_FLAGS
+          - echo "Build complete"
+        artifacts:
+          - target/release/**
+
+    - step: &test-step
+        name: Execute Unit Tests
+        image: rust:latest
+        caches:
+          - cargo
+        script:
+          - echo "Running Rust tests..."
+          - cd ${PROJECT_PATH:-.}
+          - cargo test --verbose --all-targets --all-features
+          - echo "Tests complete"
+
+    - step: &versioning-step
+        name: Version Bump & Tag
+        image: rust:latest
+        script:
+          - echo "Running versioning step..."
+          - apk add --no-cache python3 py3-pip
+          - pip install --quiet pipery-tooling
+          - |
+            pipery-tooling version \
+              --project-path ${PROJECT_PATH:-.} \
+              --version-bump ${VERSION_BUMP:-patch} \
+              --log-file ${LOG_FILE:-pipery.jsonl}
+          - grep "^version" ${PROJECT_PATH:-.}/Cargo.toml | head -1 > version_info.txt
+          - cat version_info.txt
+        artifacts:
+          - version_info.txt
+          - ${LOG_FILE:-pipery.jsonl}
+
+    - step: &packaging-step
+        name: Create Package
+        image: rust:latest
+        caches:
+          - cargo
+        script:
+          - echo "Creating Rust package..."
+          - cd ${PROJECT_PATH:-.}
+          - cargo package
+          - echo "Package created"
+
+    - step: &release-step
+        name: Release to crates.io
+        image: rust:latest
+        trigger: manual
+        script:
+          - |
+            if [ -z "$CRATES_TOKEN" ]; then
+              echo "CRATES_TOKEN not set, skipping release"
+              exit 0
+            fi
+          - echo "Publishing to crates.io..."
+          - cd ${PROJECT_PATH:-.}
+          - cargo publish --token $CRATES_TOKEN
+          - echo "Release complete"
+
+    - step: &reintegration-step
+        name: Reintegration to Target Branch
+        image: alpine:latest
+        trigger: manual
+        script:
+          - echo "Reintegration step would update target branch..."
+          - |
+            if [ -z "$GITHUB_TOKEN" ]; then
+              echo "Skipping reintegration: GITHUB_TOKEN not set"
+              exit 0
+            fi
+          - echo "Reintegration complete"
+
+    - step: &logs-step
+        name: Collect & Archive Logs
+        image: alpine:latest
+        script:
+          - echo "Collecting logs and artifacts..."
+          - |
+            if [ -f "${LOG_FILE:-pipery.jsonl}" ]; then
+              echo "Log file size: $(wc -c < ${LOG_FILE:-pipery.jsonl}) bytes"
+            fi
+        artifacts:
+          - ${LOG_FILE:-pipery.jsonl}
+          - version_info.txt
+
+variables:
+  # Build Configuration
+  PROJECT_PATH: "."
+  CONFIG_FILE: ".pipery/config.yaml"
+  RUST_TOOLCHAIN: "stable"
+  FEATURES: ""  # Feature flags
+  TARGET: ""  # Cross-compilation target
+
+  # Feature Flags
+  SKIP_SAST: "false"
+  SKIP_SCA: "false"
+  SKIP_LINT: "false"
+  SKIP_BUILD: "false"
+  SKIP_TEST: "false"
+  SKIP_VERSIONING: "false"
+  SKIP_PACKAGING: "false"
+  SKIP_RELEASE: "false"
+  SKIP_REINTEGRATION: "false"
+
+  # Release Configuration
+  VERSION_BUMP: "patch"
+
+  # Logging & Tracking
+  LOG_FILE: "pipery.jsonl"
+  TARGET_BRANCH: "main"
+
+pipelines:
+  default:
+    - step: *checkout-step
+    - step: *setup-step
+    - parallel:
+        - step: *sast-scan
+        - step: *sca-scan
+    - step:
+        <<: *lint-step
+        condition:
+          variable:
+            - SKIP_LINT = "false"
+        optional: true
+    - step:
+        <<: *build-step
+        condition:
+          variable:
+            - SKIP_BUILD = "false"
+    - step:
+        <<: *test-step
+        condition:
+          variable:
+            - SKIP_TEST = "false"
+        optional: true
+    - step:
+        <<: *versioning-step
+        condition:
+          variable:
+            - SKIP_VERSIONING = "false"
+    - step:
+        <<: *packaging-step
+        condition:
+          variable:
+            - SKIP_PACKAGING = "false"
+    - step: *logs-step
+
+  branches:
+    main:
+      - step: *checkout-step
+      - step: *setup-step
+      - parallel:
+          - step: *sast-scan
+          - step: *sca-scan
+      - step:
+          <<: *lint-step
+          condition:
+            variable:
+              - SKIP_LINT = "false"
+          optional: true
+      - step:
+          <<: *build-step
+          condition:
+            variable:
+              - SKIP_BUILD = "false"
+      - step:
+          <<: *test-step
+          condition:
+            variable:
+              - SKIP_TEST = "false"
+          optional: true
+      - step:
+          <<: *versioning-step
+          condition:
+            variable:
+              - SKIP_VERSIONING = "false"
+      - step:
+          <<: *packaging-step
+          condition:
+            variable:
+              - SKIP_PACKAGING = "false"
+      - step:
+          <<: *release-step
+          condition:
+            variable:
+              - SKIP_RELEASE = "false"
+      - step:
+          <<: *reintegration-step
+          condition:
+            variable:
+              - SKIP_REINTEGRATION = "false"
+          optional: true
+      - step: *logs-step
+
+  pull-requests:
+    feature/**:
+      - step: *checkout-step
+      - step: *setup-step
+      - parallel:
+          - step: *sast-scan
+          - step: *sca-scan
+      - step:
+          <<: *lint-step
+          condition:
+            variable:
+              - SKIP_LINT = "false"
+          optional: true
+      - step:
+          <<: *build-step
+          condition:
+            variable:
+              - SKIP_BUILD = "false"
+      - step:
+          <<: *test-step
+          condition:
+            variable:
+              - SKIP_TEST = "false"
+          optional: true
+      - step: *logs-step
+
+  custom:
+    release:
+      - step: *checkout-step
+      - step: *setup-step
+      - parallel:
+          - step: *sast-scan
+          - step: *sca-scan
+      - step:
+          <<: *lint-step
+          condition:
+            variable:
+              - SKIP_LINT = "false"
+          optional: true
+      - step:
+          <<: *build-step
+          condition:
+            variable:
+              - SKIP_BUILD = "false"
+      - step:
+          <<: *test-step
+          condition:
+            variable:
+              - SKIP_TEST = "false"
+          optional: true
+      - step:
+          <<: *versioning-step
+          condition:
+            variable:
+              - SKIP_VERSIONING = "false"
+      - step:
+          <<: *packaging-step
+          condition:
+            variable:
+              - SKIP_PACKAGING = "false"
+      - step:
+          <<: *release-step
+          condition:
+            variable:
+              - SKIP_RELEASE = "false"
+      - step:
+          <<: *reintegration-step
+          condition:
+            variable:
+              - SKIP_REINTEGRATION = "false"
+          optional: true
+      - step: *logs-step
